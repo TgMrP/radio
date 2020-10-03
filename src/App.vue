@@ -1,20 +1,20 @@
 <template>
   <div class="">
     <div class="flex flex-col px-4">
-      <div class="station cursor-pointer" v-for="(station, i) in stations" :key="i" @click="setStation(i)" :class="{active: i === currentStation}">
-        <div class="logo w-32">
-          <img :src="station.logo" :alt="station.name" class="rounded-xxl border-2 border-black">
+      <div class="station cursor-pointer max-w-4xl mx-auto" v-for="(station, i) in stations" :key="i" @click="setStation(i)" :class="{active: i === currentStation}">
+        <div class="logo" style="width:30%;">
+          <img :src="station.logo" :alt="station.name" class="mr-4 w-20 rounded-xxl border-2 border-black">
         </div>
-        <div class="freq w-32 text-4xl text-white">
+        <!-- <div class="freq text-xl mx-6 md:mx-6 sm:text-2xl md:text-2xl lg:text-3xl xl:text-4xl text-white">
           {{ station.freq }}
-        </div>
-        <div class="name w-64 text-4xl text-white font-light mr-4">
+        </div> -->
+        <div class="name text-xl sm:text-2xl md:text-2xl lg:text-3xl xl:text-4xl mr-4 text-white font-light" style="width:50%;">
           {{ station.name }}
         </div>
         <!-- <div class="w-32">
           <div class="live" v-if="i === currentStation">LIVE</div>
         </div> -->
-        <div class="w-32">
+        <div class="ml-6 md:ml-0" style="width:20%;">
           <div class="playing" v-if="i === currentStation">
             <div class="rect1"></div>
             <div class="rect2"></div>
@@ -151,21 +151,7 @@ export default {
 
 <style lang="scss">
 @import url('https://fonts.googleapis.com/css2?family=Rubik:wght@300;400;700&display=swap');
-$slider__thumb-height: 20px;
-$color__orange: #f9774e;
-$color__white: #fff;
 
-input[type=range] {
-  &::-webkit-slider-thumb {
-      background-color: $color__white;
-      border: 3px solid $color__orange;
-      width: $slider__thumb-height;
-
-      &:after {
-          right: $slider__thumb-height - 6;
-      }
-  }
-}
 html{
   height:100%;
   width:100%;
@@ -251,10 +237,16 @@ body {
     svg {
       @apply mr-2;
     }
+    input {
+      width:100%;
+    }
   }
   .statName {
-    @apply text-xl text-white font-bold;
+    @apply text-white font-bold;
     width: 50%;
+    @screen md {
+      @apply text-xl;
+    }
   }
   .playpause {
     @apply ml-6;
