@@ -1,7 +1,7 @@
 <template>
   <div class="">
     <div class="flex flex-col px-4">
-      <div class="station" v-for="(station, i) in stations" :key="i" @click="setStation(i)" :class="{active: i === currentStation}">
+      <div class="station cursor-pointer" v-for="(station, i) in stations" :key="i" @click="setStation(i)" :class="{active: i === currentStation}">
         <div class="logo w-32">
           <img :src="station.logo" :alt="station.name" class="rounded-xxl border-2 border-black">
         </div>
@@ -11,9 +11,9 @@
         <div class="name w-64 text-4xl text-white font-light mr-4">
           {{ station.name }}
         </div>
-        <div class="w-32">
+        <!-- <div class="w-32">
           <div class="live" v-if="i === currentStation">LIVE</div>
-        </div>
+        </div> -->
         <div class="w-32">
           <div class="playing" v-if="i === currentStation">
             <div class="rect1"></div>
@@ -34,8 +34,8 @@
         </svg>
       </div>
       <div class="statName">{{  stations[currentStation].name }}</div>
-      <div class="playpause">
-      <svg class="h-10 w-10 fill-current text-white" viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg"><path d="M224 435.8V76.1c0-6.7-5.4-12.1-12.2-12.1h-71.6c-6.8 0-12.2 5.4-12.2 12.1v359.7c0 6.7 5.4 12.2 12.2 12.2h71.6c6.8 0 12.2-5.4 12.2-12.2zM371.8 64h-71.6c-6.7 0-12.2 5.4-12.2 12.1v359.7c0 6.7 5.4 12.2 12.2 12.2h71.6c6.7 0 12.2-5.4 12.2-12.2V76.1c0-6.7-5.4-12.1-12.2-12.1z"/></svg>
+      <div class="playpause" @click="setStation(currentStation)">
+      <svg class="h-10 w-10 fill-current text-white cursor-pointer" viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg"><path d="M224 435.8V76.1c0-6.7-5.4-12.1-12.2-12.1h-71.6c-6.8 0-12.2 5.4-12.2 12.1v359.7c0 6.7 5.4 12.2 12.2 12.2h71.6c6.8 0 12.2-5.4 12.2-12.2zM371.8 64h-71.6c-6.7 0-12.2 5.4-12.2 12.1v359.7c0 6.7 5.4 12.2 12.2 12.2h71.6c6.7 0 12.2-5.4 12.2-12.2V76.1c0-6.7-5.4-12.1-12.2-12.1z"/></svg>
       </div>
     </div>
   </div>
@@ -128,8 +128,8 @@ export default {
         this.sound = new Howl({
             src: this.stations[i].src,
             html5: true,
-            volume: (this.volume / 100),
         });
+        this.setVolume()
         this.sound.play();
         this.nowPlaying = true;
         this.currentStation = i;
