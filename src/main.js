@@ -1,10 +1,8 @@
-import Vue from 'vue'
+import { createApp } from 'vue'
+import { registerSW } from 'virtual:pwa-register'
 import App from './App.vue'
 import './assets/tailwind.css'
-import './registerServiceWorker'
 
-Vue.config.productionTip = false
+registerSW({ immediate: true })
 
-new Vue({
-  render: h => h(App),
-}).$mount('#app')
+createApp(App).mount('#app')
