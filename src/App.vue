@@ -1,8 +1,8 @@
 <script setup>
-import { ref, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { Howl, Howler } from 'howler'
+
 import logo1 from '@/assets/1.jpg'
-import logo2 from '@/assets/2.jpg'
 import logo3 from '@/assets/3.jpg'
 import logo4 from '@/assets/4.jpg'
 import logo5 from '@/assets/5.jpg'
@@ -11,98 +11,242 @@ import logo8 from '@/assets/8.jpg'
 import logo9 from '@/assets/9.jpg'
 import logo11 from '@/assets/11.jpg'
 
+// All URLs verified live & HTTPS — browsers block mixed-content audio when the
+// page is served over HTTPS. Stations without `logo` render with a generated
+// initial-letter avatar so we never ship the wrong artwork.
 const stations = [
-  { name: 'רדיו אמצע הדרך', logo: logo2, freq: '90', src: 'https://icy.streamgates.net/Radio_CDN/Emtza_Haderech/icecast.audio' },
-  { name: 'כאן 88', logo: logo1, freq: '88', src: 'https://kanliveicy.media.kan.org.il/icy/kan88_mp3' },
-  { name: 'רדיו לב המדינה', logo: logo3, freq: '91', src: 'https://acdn.streamgates.net/91fm' },
-  { name: 'רדיו תל אביב', logo: logo4, freq: '102', src: 'https://102.livecdn.biz/102fm_mp3' },
-  { name: 'רדיוס', logo: logo5, freq: '100', src: 'https://acdn.streamgates.net/100fm' },
-  { name: 'גלגל"צ', logo: logo8, freq: '90', src: 'http://glzwizzlv.bynetcdn.com/glglz_mp3' },
-  { name: 'אקו 99', logo: logo7, freq: '90', src: 'https://eco-live.mediacast.co.il/99fm_aac' },
-  { name: 'רדיו ללא הפסקה', logo: logo9, freq: '103', src: 'https://acdn.streamgates.net/103fm' },
-  { name: 'רדיו חיפה', logo: logo11, freq: '107.5', src: 'http://1075.livecdn.biz/radiohaifa' }
+  { name: 'כאן 88', logo: logo1, src: 'https://29073.live.streamtheworld.com/KAN_88.mp3' },
+  { name: 'כאן ב', src: 'https://28563.live.streamtheworld.com/KAN_BET.mp3' },
+  { name: 'כאן גימל', src: 'https://27873.live.streamtheworld.com/KAN_GIMMEL.mp3' },
+  { name: 'כאן תרבות', src: 'https://playerservices.streamtheworld.com/api/livestream-redirect/KAN_TARBUT.mp3' },
+  { name: 'גלי צה"ל', src: 'https://glzwizzlv.bynetcdn.com/glz_mp3' },
+  { name: 'גלגל"צ', logo: logo8, src: 'https://glzicylv01.bynetcdn.com/glglz_mp3' },
+  { name: 'רדיו תל אביב 102', logo: logo4, src: 'https://102.livecdn.biz/102fm_mp3' },
+  { name: 'אקו 99', logo: logo7, src: 'https://eco-live.mediacast.co.il/99fm_aac' },
+  { name: 'רדיוס 100FM', logo: logo5, src: 'https://cdn.cybercdn.live/Radios_100FM/Audio/icecast.audio' },
+  { name: 'רדיו ללא הפסקה 103FM', logo: logo9, src: 'https://cdn.cybercdn.live/103FM/Live/icecast.audio' },
+  { name: 'רדיו לב המדינה 91FM', logo: logo3, src: 'https://cdn.cybercdn.live/Lev_Hamedina/Audio/icecast.audio' },
+  { name: 'רדיו חיפה', logo: logo11, src: 'https://1075.livecdn.biz/radiohaifa' },
+  { name: 'גלי ישראל', src: 'https://cdn.cybercdn.live/Galei_Israel/Live/icecast.audio' },
+  { name: 'רדיו דרום 97FM', src: 'https://cdn.cybercdn.live/Darom_97FM/Live/icecast.audio' },
+  { name: 'קול חי 93FM', src: 'https://media2.93fm.co.il/live-new' }
 ]
 
-const sound = ref(null)
-const nowPlaying = ref(false)
-const currentStation = ref(null)
-const volume = ref(50)
+const STORAGE_KEY = 'iradio:state'
+function loadStored() {
+  try { return JSON.parse(localStorage.getItem(STORAGE_KEY)) || {} } catch { return {} }
+}
+const stored = loadStored()
 
-function clear() {
-  nowPlaying.value = false
-  currentStation.value = null
-  sound.value = null
+const sound = ref(null)
+const status = ref('idle') // 'idle' | 'loading' | 'playing' | 'error'
+const errorMessage = ref('')
+const currentStation = ref(null)
+const volume = ref(typeof stored.volume === 'number' ? stored.volume : 50)
+const muted = ref(!!stored.muted)
+
+const isPlaying = computed(() => status.value === 'playing')
+const isLoading = computed(() => status.value === 'loading')
+const hasError = computed(() => status.value === 'error')
+
+function applyVolume() {
+  Howler.volume(volume.value / 100)
+  Howler.mute(muted.value)
 }
 
-function setVolume() {
-  Howler.volume(volume.value / 100)
+function teardown() {
+  if (sound.value) {
+    sound.value.unload()
+    sound.value = null
+  }
+  status.value = 'idle'
+  errorMessage.value = ''
 }
 
 function setStation(i) {
-  if (nowPlaying.value || sound.value) {
-    sound.value.unload()
-    nowPlaying.value = false
+  if (currentStation.value === i && (isPlaying.value || isLoading.value)) {
+    teardown()
+    currentStation.value = null
+    clearMediaSession()
+    return
   }
-  if (currentStation.value !== i) {
-    sound.value = new Howl({ src: stations[i].src, html5: true })
-    setVolume()
-    sound.value.play()
-    nowPlaying.value = true
-    currentStation.value = i
-  } else {
-    clear()
+
+  if (sound.value) {
+    sound.value.unload()
+    sound.value = null
+  }
+
+  currentStation.value = i
+  status.value = 'loading'
+  errorMessage.value = ''
+
+  const station = stations[i]
+  const howl = new Howl({
+    src: station.src,
+    html5: true,
+    format: ['mp3', 'aac', 'aacp']
+  })
+
+  howl.on('play', () => { status.value = 'playing' })
+  howl.on('loaderror', () => {
+    status.value = 'error'
+    errorMessage.value = 'שגיאת חיבור'
+  })
+  howl.on('playerror', () => {
+    status.value = 'error'
+    errorMessage.value = 'שגיאת השמעה'
+  })
+
+  sound.value = howl
+  applyVolume()
+  howl.play()
+  setMediaSession(station)
+}
+
+function toggleMute() {
+  muted.value = !muted.value
+  applyVolume()
+}
+
+function nextStation() {
+  if (currentStation.value === null) return
+  setStation((currentStation.value + 1) % stations.length)
+}
+function prevStation() {
+  if (currentStation.value === null) return
+  setStation((currentStation.value - 1 + stations.length) % stations.length)
+}
+
+function setMediaSession(station) {
+  if (!('mediaSession' in navigator)) return
+  navigator.mediaSession.metadata = new window.MediaMetadata({
+    title: station.name,
+    artist: 'רדיו ישראלי',
+    album: 'iradio',
+    artwork: station.logo ? [{ src: station.logo, sizes: '512x512', type: 'image/jpeg' }] : []
+  })
+  navigator.mediaSession.setActionHandler('play', () => sound.value?.play())
+  navigator.mediaSession.setActionHandler('pause', () => sound.value?.pause())
+  navigator.mediaSession.setActionHandler('stop', () => { teardown(); currentStation.value = null })
+  navigator.mediaSession.setActionHandler('previoustrack', prevStation)
+  navigator.mediaSession.setActionHandler('nexttrack', nextStation)
+}
+function clearMediaSession() {
+  if (!('mediaSession' in navigator)) return
+  navigator.mediaSession.metadata = null
+  for (const a of ['play', 'pause', 'stop', 'previoustrack', 'nexttrack']) {
+    try { navigator.mediaSession.setActionHandler(a, null) } catch { /* unsupported */ }
   }
 }
 
-watch(volume, setVolume)
+function avatarLetter(name) {
+  return [...name].find((c) => c.trim() && !'"\'`'.includes(c)) || '?'
+}
+function avatarColor(name) {
+  let h = 0
+  for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) >>> 0
+  return `hsl(${h % 360}, 55%, 45%)`
+}
+
+function persist() {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ volume: volume.value, muted: muted.value }))
+  } catch { /* private mode / storage full */ }
+}
+
+watch(volume, () => { applyVolume(); persist() })
+watch(muted, persist)
+
+onMounted(() => {
+  applyVolume()
+  window.addEventListener('keydown', (e) => {
+    if (e.target.tagName === 'INPUT') return
+    if (e.key === 'm' || e.key === 'M') toggleMute()
+    else if (e.code === 'Space' && currentStation.value !== null) {
+      e.preventDefault()
+      setStation(currentStation.value)
+    }
+  })
+})
 </script>
 
 <template>
   <div>
-    <div class="flex flex-col px-4">
-      <div
+    <h1 class="sr-only">רדיו ישראלי</h1>
+    <ul class="station-list" aria-label="תחנות רדיו">
+      <li
         v-for="(station, i) in stations"
-        :key="i"
-        class="station cursor-pointer max-w-4xl mx-auto"
+        :key="station.name"
+        class="station"
         :class="{ active: i === currentStation }"
-        @click="setStation(i)"
       >
-        <div class="logo" style="width: 30%">
-          <img :src="station.logo" :alt="station.name" class="mr-4 w-20 rounded-xxl border-2 border-black" />
-        </div>
-        <div class="name text-xl sm:text-2xl md:text-2xl lg:text-3xl xl:text-4xl mr-4 text-white font-light" style="width: 50%">
-          {{ station.name }}
-        </div>
-        <div class="ml-6 md:ml-0" style="width: 20%">
-          <div v-if="i === currentStation" class="playing">
-            <div class="rect1"></div>
-            <div class="rect2"></div>
-            <div class="rect3"></div>
-            <div class="rect4"></div>
-            <div class="rect5"></div>
-          </div>
-        </div>
-      </div>
-    </div>
-    <div v-if="nowPlaying" class="pt-16"></div>
-    <div v-if="nowPlaying && currentStation > -1" class="footer">
+        <button
+          type="button"
+          :aria-current="i === currentStation ? 'true' : 'false'"
+          :aria-label="`האזן ל${station.name}`"
+          class="station-btn"
+          @click="setStation(i)"
+        >
+          <span class="logo-cell">
+            <img v-if="station.logo" :src="station.logo" alt="" class="logo" loading="lazy" />
+            <span
+              v-else
+              class="avatar"
+              :style="{ backgroundColor: avatarColor(station.name) }"
+              aria-hidden="true"
+            >{{ avatarLetter(station.name) }}</span>
+          </span>
+          <span class="name text-xl sm:text-2xl md:text-2xl lg:text-3xl xl:text-4xl text-white font-light">
+            {{ station.name }}
+          </span>
+          <span class="indicator">
+            <span v-if="i === currentStation && isLoading" class="spinner" aria-label="טוען"></span>
+            <span v-else-if="i === currentStation && hasError" class="error-icon" :title="errorMessage" aria-label="שגיאה">!</span>
+            <span v-else-if="i === currentStation && isPlaying" class="playing" aria-label="משדר עכשיו">
+              <span class="rect1"></span>
+              <span class="rect2"></span>
+              <span class="rect3"></span>
+              <span class="rect4"></span>
+              <span class="rect5"></span>
+            </span>
+          </span>
+        </button>
+      </li>
+    </ul>
+
+    <div v-if="currentStation !== null" class="footer-spacer"></div>
+    <div v-if="currentStation !== null" class="footer" role="region" aria-label="פקדי השמעה">
       <div class="volume">
-        <input v-model="volume" type="range" max="100" />
-        <svg id="volume" viewBox="0 0 26.2 26.2" class="fill-current text-white h-6">
-          <path
-            fill-rule="evenodd"
-            clip-rule="evenodd"
-            d="M21.1 13.1c0-3.3-2-6.2-4.9-7.4l-.8 1.8c2.2.9 3.7 3 3.7 5.5s-1.5 4.6-3.7 5.5l.8 1.8c2.9-1 4.9-3.9 4.9-7.2zm-4 0c0-1.7-1-3.1-2.5-3.7l-.8 1.8c.7.3 1.2 1 1.2 1.8s-.5 1.5-1.2 1.8l.8 1.8c1.5-.4 2.5-1.8 2.5-3.5zM17.7 2l-.8 1.8c3.6 1.5 6.2 5.1 6.2 9.2 0 4.2-2.5 7.7-6.2 9.2l.8 1.8c4.3-1.8 7.4-6.1 7.4-11.1s-3-9.1-7.4-10.9zM1.1 8.1v10h4l7 7v-24l-7 7h-4z"
-          />
-        </svg>
+        <button
+          type="button"
+          class="mute-btn"
+          :aria-label="muted ? 'בטל השתקה' : 'השתק'"
+          :aria-pressed="muted"
+          @click="toggleMute"
+        >
+          <svg v-if="muted" viewBox="0 0 24 24" class="fill-current text-white h-6">
+            <path d="M16.5 12c0-1.77-1.02-3.29-2.5-4.03v2.21l2.45 2.45c.03-.2.05-.41.05-.63zm2.5 0c0 .94-.2 1.82-.54 2.64l1.51 1.51C20.63 14.91 21 13.5 21 12c0-4.28-2.99-7.86-7-8.77v2.06c2.89.86 5 3.54 5 6.71zM4.27 3 3 4.27 7.73 9H3v6h4l5 5v-6.73l4.25 4.25c-.67.52-1.42.93-2.25 1.18v2.06c1.38-.31 2.63-.95 3.69-1.81L19.73 21 21 19.73l-9-9L4.27 3zM12 4 9.91 6.09 12 8.18V4z" />
+          </svg>
+          <svg v-else viewBox="0 0 24 24" class="fill-current text-white h-6">
+            <path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z" />
+          </svg>
+        </button>
+        <input v-model.number="volume" type="range" min="0" max="100" :disabled="muted" aria-label="עוצמת קול" />
       </div>
-      <div class="statName">{{ stations[currentStation].name }}</div>
-      <div class="playpause" @click="setStation(currentStation)">
-        <svg class="h-10 w-10 fill-current text-white cursor-pointer" viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg">
-          <path
-            d="M224 435.8V76.1c0-6.7-5.4-12.1-12.2-12.1h-71.6c-6.8 0-12.2 5.4-12.2 12.1v359.7c0 6.7 5.4 12.2 12.2 12.2h71.6c6.8 0 12.2-5.4 12.2-12.2zM371.8 64h-71.6c-6.7 0-12.2 5.4-12.2 12.1v359.7c0 6.7 5.4 12.2 12.2 12.2h71.6c6.7 0 12.2-5.4 12.2-12.2V76.1c0-6.7-5.4-12.1-12.2-12.1z"
-          />
-        </svg>
+      <div class="statName">
+        <span v-if="isLoading">טוען…</span>
+        <span v-else-if="hasError">⚠ {{ errorMessage }}</span>
+        <span v-else>{{ stations[currentStation].name }}</span>
+      </div>
+      <div class="playpause">
+        <button type="button" :aria-label="isPlaying || isLoading ? 'עצור' : 'הפעל'" @click="setStation(currentStation)">
+          <svg v-if="isPlaying || isLoading" class="h-10 w-10 fill-current text-white" viewBox="0 0 512 512">
+            <path d="M224 435.8V76.1c0-6.7-5.4-12.1-12.2-12.1h-71.6c-6.8 0-12.2 5.4-12.2 12.1v359.7c0 6.7 5.4 12.2 12.2 12.2h71.6c6.8 0 12.2-5.4 12.2-12.2zM371.8 64h-71.6c-6.7 0-12.2 5.4-12.2 12.1v359.7c0 6.7 5.4 12.2 12.2 12.2h71.6c6.7 0 12.2-5.4 12.2-12.2V76.1c0-6.7-5.4-12.1-12.2-12.1z" />
+          </svg>
+          <svg v-else class="h-10 w-10 fill-current text-white" viewBox="0 0 512 512">
+            <path d="M96 64v384l320-192L96 64z" />
+          </svg>
+        </button>
       </div>
     </div>
   </div>
@@ -111,12 +255,7 @@ watch(volume, setVolume)
 <style lang="scss">
 @import url('https://fonts.googleapis.com/css2?family=Rubik:wght@300;400;700&display=swap');
 
-html {
-  height: 100%;
-  width: 100%;
-  direction: rtl;
-}
-
+html { height: 100%; width: 100%; direction: rtl; }
 body {
   height: 100%;
   width: 99%;
@@ -124,48 +263,101 @@ body {
   @apply bg-green-500;
 }
 
-.station {
-  @apply my-2 w-full flex items-center justify-center rounded-xxl py-4;
+button {
+  background: transparent;
+  border: 0;
+  padding: 0;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
 }
+button:focus-visible { outline: 2px solid #fff; outline-offset: 2px; border-radius: 4px; }
 
+.station-list { list-style: none; padding: 0; margin: 0; @apply flex flex-col px-4; }
+
+.station {
+  @apply my-2 w-full rounded-xxl py-2;
+}
 .station:hover,
-.active {
+.station:focus-within,
+.station.active {
   background-color: rgba(255, 255, 255, 0.1);
 }
 
-.live {
-  @apply px-2 text-4xl font-bold;
-  background-color: #cc1919;
-  border-radius: 3px;
-  color: #fff;
-  font-size: 2vw;
-  line-height: 3vw;
-  display: inline-block;
-  text-align: center;
-  text-shadow: none;
+.station-btn {
+  @apply w-full max-w-4xl mx-auto flex items-center justify-center;
+  padding: 8px 0;
+}
+
+.logo-cell {
+  width: 30%;
+  display: flex;
+  justify-content: flex-end;
+  padding-inline-end: 1rem;
+}
+.logo {
+  @apply w-20 h-20 rounded-xxl border-2 border-black;
+  object-fit: cover;
+}
+.avatar {
+  @apply w-20 h-20 rounded-xxl border-2 border-black flex items-center justify-center text-white font-bold;
+  font-size: 2rem;
+}
+
+.name { width: 50%; }
+
+.indicator {
+  width: 20%;
+  padding-inline-start: 1.5rem;
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  min-height: 40px;
 }
 
 .playing {
   width: 100px;
   height: 40px;
-  text-align: center;
-  transition: all 0.2s ease;
+  display: inline-flex;
+  align-items: stretch;
 }
-
-.playing > div {
+.playing > span {
   background-color: #fff;
   height: 100%;
   width: 6px;
   display: inline-block;
-  transition: all 0.2s ease;
   animation: wavy 1s ease infinite forwards;
   box-shadow: 1px 1px 2px rgba(0, 0, 0, 0.33);
 }
+.playing .rect2 { animation-delay: 0.25s; margin-inline-start: 1px; }
+.playing .rect3 { animation-delay: 0.5s; margin-inline-start: 1px; }
+.playing .rect4 { animation-delay: 0.75s; margin-inline-start: 1px; }
+.playing .rect5 { animation-delay: 1s; margin-inline-start: 1px; }
 
-.playing .rect2 { animation-delay: 0.25s; margin-left: 1px; }
-.playing .rect3 { animation-delay: 0.5s; margin-left: 1px; }
-.playing .rect4 { animation-delay: 0.75s; margin-left: 1px; }
-.playing .rect5 { animation-delay: 1s; margin-left: 1px; }
+.spinner {
+  width: 30px;
+  height: 30px;
+  border: 3px solid rgba(255, 255, 255, 0.3);
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+  display: inline-block;
+}
+
+.error-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: #cc1919;
+  color: #fff;
+  font-weight: 700;
+  font-size: 1.25rem;
+}
+
+.footer-spacer { padding-top: 5rem; }
 
 .footer {
   width: 90%;
@@ -176,30 +368,24 @@ body {
   @apply bg-green-800 text-center h-16 border-t-2 border-green-300 flex items-center justify-between rounded-tr-xxl rounded-tl-xxl mx-auto;
 
   .volume {
-    @apply mr-6 flex items-center justify-center;
+    @apply mr-6 flex items-center;
     width: 30%;
+    gap: 0.5rem;
 
-    svg {
-      @apply mr-2;
-    }
-
-    input {
-      width: 100%;
-    }
+    input { width: 100%; cursor: pointer; }
+    input:disabled { opacity: 0.5; cursor: not-allowed; }
   }
-
+  .mute-btn { display: inline-flex; flex-shrink: 0; }
   .statName {
     @apply text-white font-bold;
     width: 50%;
-
-    @media (min-width: 768px) {
-      @apply text-xl;
-    }
+    @media (min-width: 768px) { @apply text-xl; }
   }
-
   .playpause {
     @apply ml-6;
     width: 10%;
+    display: flex;
+    justify-content: center;
   }
 }
 
@@ -207,5 +393,8 @@ body {
   0%   { transform: scaleY(1); }
   50%  { transform: scaleY(0.6); }
   100% { transform: scaleY(1); }
+}
+@keyframes spin {
+  to { transform: rotate(360deg); }
 }
 </style>
