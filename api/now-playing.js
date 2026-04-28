@@ -77,20 +77,27 @@ function maybeDecodeHexEscaped(text) {
     try { return new TextDecoder('utf-8', { fatal: false }).decode(bytes) } catch { return null }
   }
 
-  // First pass: split on whitespace, treat each token as a hex byte sequence.
-  // Lone "-" tokens become literal dashes (artist/title separator).
-  const perWord = text
-    .replace(/-/g, '')
-    .split(/\s+/)
-    .filter(Boolean)
-    .map((tok) => /^[0-9A-F]+$/i.test(tok) ? decodeBytes(tok) : tok)
-    .filter((s) => s != null)
-    .join(' ')
-    .trim()
-  if (perWord && /[֐-׿]/.test(perWord) && !perWord.includes('�')) return perWord
+  // Strip the byte-separator dashes (between hex chars) and split on whitespace.
+  // What's left is one hex-byte sequence per word. Some streams break a
+  // multi-byte char across word boundaries (e.g. "D7" then " " then "9D"), so
+  // when a token decodes with U+FFFD we greedily merge it with the next token.
+  const tokens = text.replace(/-/g, '').split(/\s+/).filter((t) => /^[0-9A-F]+$/i.test(t))
+  const merged = []
+  for (let i = 0; i < tokens.length; i++) {
+    let cur = tokens[i]
+    let dec = decodeBytes(cur)
+    while (dec && dec.includes('�') && i + 1 < tokens.length) {
+      cur += tokens[i + 1]
+      dec = decodeBytes(cur)
+      i++
+    }
+    if (dec && !dec.includes('�')) merged.push(dec)
+  }
+  const joined = merged.join(' ').trim()
+  if (joined && /[֐-׿]/.test(joined)) return joined
 
-  // Fallback: bulk decode every hex byte in the string (loses spaces but is
-  // more tolerant of malformed word boundaries like "D7 - 9D").
+  // Fallback: bulk decode every hex byte in the string (no word spaces, but
+  // robust against truly malformed boundaries).
   const bulk = decodeBytes(text.replace(/[^0-9A-F]/gi, ''))
   if (bulk && !bulk.includes('�') && /[֐-׿]/.test(bulk)) return bulk
 
