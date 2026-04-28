@@ -6,6 +6,9 @@ import kan88Logo from '@/assets/kan88.png'
 import kanBetLogo from '@/assets/kan_bet.png'
 import kanGimelLogo from '@/assets/kan_gimel.png'
 import kanTarbutLogo from '@/assets/kan_tarbut.svg'
+import kanMoreshetLogo from '@/assets/kan_moreshet.png'
+import kanRekaLogo from '@/assets/kan_reka.png'
+import kolHamusicaLogo from '@/assets/kol_hamusica.png'
 import galatzLogo from '@/assets/galatz.png'
 import glglzLogo from '@/assets/glglz.png'
 import tlv102Logo from '@/assets/tlv102.jpg'
@@ -17,6 +20,8 @@ import haifaLogo from '@/assets/haifa.jpg'
 import galeiIsraelLogo from '@/assets/galei_il.png'
 import darom97Logo from '@/assets/darom97.png'
 import kolchaiLogo from '@/assets/kolchai.png'
+import ashamsLogo from '@/assets/ashams.png'
+import mizrahitLogo from '@/assets/mizrahit.png'
 
 // All URLs verified live & HTTPS — browsers block mixed-content audio when the
 // page is served over HTTPS.
@@ -25,6 +30,9 @@ const stations = [
   { name: 'כאן ב', logo: kanBetLogo, src: 'https://28563.live.streamtheworld.com/KAN_BET.mp3' },
   { name: 'כאן גימל', logo: kanGimelLogo, src: 'https://27873.live.streamtheworld.com/KAN_GIMMEL.mp3' },
   { name: 'כאן תרבות', logo: kanTarbutLogo, src: 'https://playerservices.streamtheworld.com/api/livestream-redirect/KAN_TARBUT.mp3' },
+  { name: 'כאן מורשת', logo: kanMoreshetLogo, src: 'https://playerservices.streamtheworld.com/api/livestream-redirect/KAN_MORESHET.mp3' },
+  { name: 'כאן קול המוסיקה', logo: kolHamusicaLogo, src: 'https://playerservices.streamtheworld.com/api/livestream-redirect/KAN_KOL_HAMUSICA.mp3' },
+  { name: 'כאן רק"ע', logo: kanRekaLogo, src: 'https://playerservices.streamtheworld.com/api/livestream-redirect/KAN_REKA.mp3' },
   { name: 'גלי צה"ל', logo: galatzLogo, src: 'https://glzwizzlv.bynetcdn.com/glz_mp3' },
   { name: 'גלגל"צ', logo: glglzLogo, src: 'https://glzicylv01.bynetcdn.com/glglz_mp3' },
   { name: 'רדיו תל אביב 102', logo: tlv102Logo, src: 'https://102.livecdn.biz/102fm_mp3' },
@@ -35,7 +43,9 @@ const stations = [
   { name: 'רדיו חיפה', logo: haifaLogo, src: 'https://1075.livecdn.biz/radiohaifa' },
   { name: 'גלי ישראל', logo: galeiIsraelLogo, src: 'https://cdn.cybercdn.live/Galei_Israel/Live/icecast.audio' },
   { name: 'רדיו דרום 97FM', logo: darom97Logo, src: 'https://cdn.cybercdn.live/Darom_97FM/Live/icecast.audio' },
-  { name: 'קול חי 93FM', logo: kolchaiLogo, src: 'https://media2.93fm.co.il/live-new' }
+  { name: 'קול חי 93FM', logo: kolchaiLogo, src: 'https://media2.93fm.co.il/live-new' },
+  { name: 'רדיו מזרחית', logo: mizrahitLogo, src: 'https://mzr.mediacast.co.il/mzradio' },
+  { name: 'א-שמס', logo: ashamsLogo, src: 'https://cdna.streamgates.net/Ashams/Live/icecast.audio' }
 ]
 
 const STATE_KEY = 'iradio:state'
@@ -61,6 +71,7 @@ const favorites = ref(loadJSON(FAV_KEY, []))
 const searchQuery = ref('')
 const sleepMinutes = ref(0)
 const sleepRemaining = ref(0)
+const nowPlayingTitle = ref('')
 
 const isPlaying = computed(() => status.value === 'playing')
 const isLoading = computed(() => status.value === 'loading')
@@ -107,6 +118,8 @@ function setStation(i) {
     teardown()
     currentStation.value = null
     clearMediaSession()
+    releaseWakeLock()
+    stopNowPlayingPoll()
     return
   }
 
@@ -118,6 +131,8 @@ function setStation(i) {
   currentStation.value = i
   status.value = 'loading'
   errorMessage.value = ''
+  nowPlayingTitle.value = ''
+  stopNowPlayingPoll()
 
   const station = stations[i]
   const howl = new Howl({
@@ -130,20 +145,94 @@ function setStation(i) {
     status.value = 'playing'
     lastPlayedName.value = station.name
     persistState()
+    requestWakeLock()
+    startNowPlayingPoll(station)
   })
   howl.on('loaderror', () => {
     status.value = 'error'
     errorMessage.value = 'שגיאת חיבור'
+    releaseWakeLock()
   })
   howl.on('playerror', () => {
     status.value = 'error'
     errorMessage.value = 'שגיאת השמעה'
+    releaseWakeLock()
   })
 
   sound.value = howl
   applyVolume()
   howl.play()
   setMediaSession(station)
+}
+
+// ICY metadata polling — fetches the current song/program title from our Edge
+// Function (/api/now-playing) and refreshes Media Session so the lock screen
+// shows the song name, not just the station.
+let nowPlayingTimer = null
+async function fetchNowPlaying(station) {
+  try {
+    const r = await fetch(`/api/now-playing?url=${encodeURIComponent(station.src)}`)
+    if (!r.ok) return
+    const data = await r.json()
+    if (data?.title && data.title !== nowPlayingTitle.value) {
+      nowPlayingTitle.value = data.title
+      // Keep Media Session in sync so the OS lock screen reflects the song.
+      if ('mediaSession' in navigator && navigator.mediaSession.metadata) {
+        navigator.mediaSession.metadata = new window.MediaMetadata({
+          title: data.title,
+          artist: station.name,
+          album: 'iradio',
+          artwork: station.logo ? [{ src: station.logo, sizes: '512x512', type: 'image/jpeg' }] : []
+        })
+      }
+    }
+  } catch { /* offline / API down — no-op, keep showing whatever we had */ }
+}
+function startNowPlayingPoll(station) {
+  fetchNowPlaying(station)
+  nowPlayingTimer = setInterval(() => fetchNowPlaying(station), 30000)
+}
+function stopNowPlayingPoll() {
+  if (nowPlayingTimer) {
+    clearInterval(nowPlayingTimer)
+    nowPlayingTimer = null
+  }
+  nowPlayingTitle.value = ''
+}
+
+// Wake Lock keeps the screen awake while audio is playing — important for
+// listening at night or in the car when the page is in foreground.
+let wakeLock = null
+async function requestWakeLock() {
+  if (!('wakeLock' in navigator)) return
+  try {
+    wakeLock = await navigator.wakeLock.request('screen')
+    wakeLock.addEventListener('release', () => { wakeLock = null })
+  } catch { /* user denied or unsupported — no-op */ }
+}
+function releaseWakeLock() {
+  if (wakeLock) {
+    wakeLock.release().catch(() => { /* already released */ })
+    wakeLock = null
+  }
+}
+// Re-acquire the wake lock when the tab becomes visible again — browsers
+// auto-release it when the page is hidden.
+function onVisibilityChange() {
+  if (document.visibilityState === 'visible' && isPlaying.value && !wakeLock) {
+    requestWakeLock()
+  }
+}
+
+async function shareCurrentStation() {
+  if (currentStation.value === null) return
+  const station = stations[currentStation.value]
+  const text = `מאזין ל${station.name} ב-iradio`
+  if (navigator.share) {
+    try { await navigator.share({ title: station.name, text, url: location.href }) } catch { /* user canceled */ }
+  } else {
+    try { await navigator.clipboard.writeText(`${text} - ${location.href}`) } catch { /* clipboard blocked */ }
+  }
 }
 
 function toggleMute() {
@@ -246,12 +335,26 @@ function onKeydown(e) {
   } else if (e.key === '/') {
     e.preventDefault()
     document.querySelector('.search-input')?.focus()
+  } else if (e.key === 'ArrowUp') {
+    e.preventDefault()
+    volume.value = Math.min(100, volume.value + 5)
+  } else if (e.key === 'ArrowDown') {
+    e.preventDefault()
+    volume.value = Math.max(0, volume.value - 5)
+  } else if (e.key === 'ArrowRight' && currentStation.value !== null) {
+    // RTL: ArrowRight feels like "previous" visually
+    e.preventDefault()
+    prevStation()
+  } else if (e.key === 'ArrowLeft' && currentStation.value !== null) {
+    e.preventDefault()
+    nextStation()
   }
 }
 
 onMounted(() => {
   applyVolume()
   window.addEventListener('keydown', onKeydown)
+  document.addEventListener('visibilitychange', onVisibilityChange)
 
   if (lastPlayedName.value) {
     requestAnimationFrame(() => {
@@ -263,7 +366,10 @@ onMounted(() => {
 
 onUnmounted(() => {
   if (sleepTicker) clearInterval(sleepTicker)
+  stopNowPlayingPoll()
   window.removeEventListener('keydown', onKeydown)
+  document.removeEventListener('visibilitychange', onVisibilityChange)
+  releaseWakeLock()
 })
 </script>
 
@@ -385,15 +491,36 @@ onUnmounted(() => {
             <path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z" />
           </svg>
         </button>
-        <input v-model.number="volume" type="range" min="0" max="100" :disabled="muted" aria-label="עוצמת קול" />
+        <input
+          v-model.number="volume"
+          type="range"
+          min="0"
+          max="100"
+          :disabled="muted"
+          aria-label="עוצמת קול"
+          :style="{ '--volume-pct': muted ? '0%' : `${volume}%` }"
+        />
       </div>
       <div class="statName">
-        <span v-if="isLoading">טוען…</span>
-        <span v-else-if="hasError">⚠ {{ errorMessage }}</span>
-        <span v-else>{{ stations[currentStation].name }}</span>
+        <span v-if="isLoading" class="stat-line stat-primary">טוען…</span>
+        <span v-else-if="hasError" class="stat-line stat-primary">⚠ {{ errorMessage }}</span>
+        <template v-else>
+          <span class="stat-line stat-primary">{{ stations[currentStation].name }}</span>
+          <span v-if="nowPlayingTitle" class="stat-line stat-now-playing" :title="nowPlayingTitle">
+            <svg viewBox="0 0 24 24" class="h-3 w-3 fill-current inline" aria-hidden="true">
+              <path d="M12 3v10.55A4 4 0 1 0 14 17V7h4V3z"/>
+            </svg>
+            {{ nowPlayingTitle }}
+          </span>
+        </template>
       </div>
-      <div class="playpause">
-        <button type="button" :aria-label="isPlaying || isLoading ? 'עצור' : 'הפעל'" @click="setStation(currentStation)">
+      <div class="footer-actions">
+        <button type="button" class="share-btn" aria-label="שתף תחנה" @click="shareCurrentStation">
+          <svg viewBox="0 0 24 24" class="h-6 w-6 fill-current text-white">
+            <path d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.47-.09-.7l7.05-4.11c.54.5 1.25.81 2.04.81 1.66 0 3-1.34 3-3s-1.34-3-3-3-3 1.34-3 3c0 .24.04.47.09.7L8.04 9.81C7.5 9.31 6.79 9 6 9c-1.66 0-3 1.34-3 3s1.34 3 3 3c.79 0 1.5-.31 2.04-.81l7.12 4.16c-.05.21-.08.43-.08.65 0 1.61 1.31 2.92 2.92 2.92s2.92-1.31 2.92-2.92-1.31-2.92-2.92-2.92"/>
+          </svg>
+        </button>
+        <button type="button" class="play-btn" :aria-label="isPlaying || isLoading ? 'עצור' : 'הפעל'" @click="setStation(currentStation)">
           <svg v-if="isPlaying || isLoading" class="h-10 w-10 fill-current text-white" viewBox="0 0 512 512">
             <path d="M224 435.8V76.1c0-6.7-5.4-12.1-12.2-12.1h-71.6c-6.8 0-12.2 5.4-12.2 12.1v359.7c0 6.7 5.4 12.2 12.2 12.2h71.6c6.8 0 12.2-5.4 12.2-12.2zM371.8 64h-71.6c-6.7 0-12.2 5.4-12.2 12.1v359.7c0 6.7 5.4 12.2 12.2 12.2h71.6c6.7 0 12.2-5.4 12.2-12.2V76.1c0-6.7-5.4-12.1-12.2-12.1z" />
           </svg>
@@ -633,32 +760,124 @@ button:focus-visible { outline: 2px solid #fff; outline-offset: 2px; border-radi
 .footer-spacer { padding-top: 5rem; }
 
 .footer {
-  width: 90%;
+  width: 100%;
   z-index: 10;
   bottom: 0;
-  right: 5%;
+  inset-inline: 0;
   position: fixed;
-  @apply bg-green-800 text-center h-16 border-t-2 border-green-300 flex items-center justify-between rounded-tr-xxl rounded-tl-xxl mx-auto;
+  height: 4rem;
+  padding: 0 1rem;
+  gap: 1rem;
+  @apply bg-green-800 text-center border-t-2 border-green-300 flex items-center justify-between mx-auto;
+
+  @media (min-width: 640px) {
+    width: 90%;
+    inset-inline: auto;
+    right: 5%;
+    @apply rounded-tr-xxl rounded-tl-xxl;
+  }
 
   .volume {
-    @apply mr-6 flex items-center;
-    width: 30%;
+    flex: 1;
+    max-width: 30%;
+    display: flex;
+    align-items: center;
     gap: 0.5rem;
 
-    input { width: 100%; cursor: pointer; }
-    input:disabled { opacity: 0.5; cursor: not-allowed; }
+    input[type='range'] {
+      flex: 1;
+      width: 100%;
+      cursor: pointer;
+      appearance: none;
+      -webkit-appearance: none;
+      height: 4px;
+      // RTL slider: handle is X% from the right (start), so the filled segment
+      // is on the right and empty on the left. CSS gradient angles are absolute
+      // (`to left` = right→left), so `to left` paints fill→empty correctly.
+      background: linear-gradient(to left,
+        #fff 0%,
+        #fff calc(var(--volume-pct, 50%)),
+        rgba(255, 255, 255, 0.3) calc(var(--volume-pct, 50%)),
+        rgba(255, 255, 255, 0.3) 100%);
+      border-radius: 9999px;
+      outline: 0;
+
+      &::-webkit-slider-thumb {
+        appearance: none;
+        -webkit-appearance: none;
+        width: 16px;
+        height: 16px;
+        border-radius: 50%;
+        background: #fff;
+        cursor: pointer;
+        box-shadow: 0 1px 4px rgba(0, 0, 0, 0.3);
+        transition: transform 0.15s ease;
+      }
+      &::-webkit-slider-thumb:hover { transform: scale(1.2); }
+      &::-moz-range-thumb {
+        width: 16px;
+        height: 16px;
+        border-radius: 50%;
+        background: #fff;
+        border: 0;
+        cursor: pointer;
+        box-shadow: 0 1px 4px rgba(0, 0, 0, 0.3);
+      }
+      &:focus-visible { outline: 2px solid #fff; outline-offset: 4px; }
+      &:disabled { opacity: 0.5; cursor: not-allowed; }
+    }
   }
-  .mute-btn { display: inline-flex; flex-shrink: 0; }
+  .mute-btn { display: inline-flex; flex-shrink: 0; padding: 0.25rem; }
   .statName {
-    @apply text-white font-bold;
-    width: 50%;
-    @media (min-width: 768px) { @apply text-xl; }
-  }
-  .playpause {
-    @apply ml-6;
-    width: 10%;
+    @apply text-white;
+    flex: 1;
+    min-width: 0;
+    text-align: center;
     display: flex;
+    flex-direction: column;
     justify-content: center;
+    line-height: 1.2;
+    gap: 2px;
+  }
+  .stat-line {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .stat-primary {
+    @apply font-bold;
+    @media (min-width: 768px) { @apply text-lg; }
+  }
+  .stat-now-playing {
+    font-size: 0.75rem;
+    opacity: 0.85;
+    font-weight: 400;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.25rem;
+    @media (min-width: 768px) { font-size: 0.85rem; }
+  }
+  .footer-actions {
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+  .share-btn,
+  .play-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0.25rem;
+    border-radius: 50%;
+    transition: background 0.15s ease;
+    &:hover { background: rgba(255, 255, 255, 0.15); }
+  }
+  // hide share button on tiny screens — footer is already cramped
+  @media (max-width: 480px) {
+    .share-btn { display: none; }
+    .volume { max-width: 38%; }
   }
 }
 
