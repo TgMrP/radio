@@ -60,7 +60,45 @@ function decodeIcy(bytes) {
 function parseStreamTitle(bytes) {
   const text = decodeIcy(bytes)
   const m = text.match(/StreamTitle='([^']*)'/)
-  return m ? m[1].trim() : ''
+  if (!m) return ''
+  return cleanTitle(maybeDecodeHexEscaped(m[1]))
+}
+
+// Some stations (e.g. Mizrahit FM) encode their UTF-8 bytes as ASCII hex with
+// dash separators in the StreamTitle field, e.g. "D7-97-D7-99-D7-99-D7-9D"
+// for "חיים". Detect that pattern and turn it back into real text.
+function maybeDecodeHexEscaped(text) {
+  if (!/(?:[0-9A-F]{2}-){3,}/i.test(text)) return text
+
+  const decodeBytes = (hex) => {
+    if (!hex || hex.length % 2) return null
+    const bytes = new Uint8Array(hex.length / 2)
+    for (let i = 0; i < hex.length; i += 2) bytes[i / 2] = parseInt(hex.slice(i, i + 2), 16)
+    try { return new TextDecoder('utf-8', { fatal: false }).decode(bytes) } catch { return null }
+  }
+
+  // First pass: split on whitespace, treat each token as a hex byte sequence.
+  // Lone "-" tokens become literal dashes (artist/title separator).
+  const perWord = text
+    .replace(/-/g, '')
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((tok) => /^[0-9A-F]+$/i.test(tok) ? decodeBytes(tok) : tok)
+    .filter((s) => s != null)
+    .join(' ')
+    .trim()
+  if (perWord && /[֐-׿]/.test(perWord) && !perWord.includes('�')) return perWord
+
+  // Fallback: bulk decode every hex byte in the string (loses spaces but is
+  // more tolerant of malformed word boundaries like "D7 - 9D").
+  const bulk = decodeBytes(text.replace(/[^0-9A-F]/gi, ''))
+  if (bulk && !bulk.includes('�') && /[֐-׿]/.test(bulk)) return bulk
+
+  return text
+}
+
+function cleanTitle(t) {
+  return t.replace(/\s+/g, ' ').trim()
 }
 
 // Many Israeli stations broadcast generic CDN strings instead of song titles.
