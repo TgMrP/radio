@@ -50,6 +50,8 @@ const stations = [
 
 const STATE_KEY = 'iradio:state'
 const FAV_KEY = 'iradio:favorites'
+const RECENTS_KEY = 'iradio:recents'
+const RECENTS_LIMIT = 5
 
 function loadJSON(key, fallback) {
   try {
@@ -68,6 +70,7 @@ const muted = ref(!!stored.muted)
 const lastPlayedName = ref(stored.lastStation || null)
 
 const favorites = ref(loadJSON(FAV_KEY, []))
+const recents = ref(loadJSON(RECENTS_KEY, [])) // most-recent-first list of station names
 const searchQuery = ref('')
 const sleepMinutes = ref(0)
 const sleepRemaining = ref(0)
@@ -84,13 +87,28 @@ const visibleStations = computed(() => {
   if (q) {
     return list.filter((s) => s.name.toLowerCase().includes(q))
   }
-  // favorites first, then original order
+  // Sort priority: favorites first, then recently-played (most recent first),
+  // then everything else in original order.
+  const recentIndex = (name) => {
+    const i = recents.value.indexOf(name)
+    return i < 0 ? Infinity : i
+  }
   return list.sort((a, b) => {
     const fa = isFavorite(a.name) ? 0 : 1
     const fb = isFavorite(b.name) ? 0 : 1
-    return fa !== fb ? fa - fb : a.idx - b.idx
+    if (fa !== fb) return fa - fb
+    const ra = recentIndex(a.name)
+    const rb = recentIndex(b.name)
+    if (ra !== rb) return ra - rb
+    return a.idx - b.idx
   })
 })
+
+function recordRecent(name) {
+  const next = [name, ...recents.value.filter((n) => n !== name)].slice(0, RECENTS_LIMIT)
+  recents.value = next
+  try { localStorage.setItem(RECENTS_KEY, JSON.stringify(next)) } catch { /* storage full */ }
+}
 
 const sleepLabel = computed(() => {
   if (!sleepRemaining.value) return ''
@@ -144,6 +162,7 @@ function setStation(i) {
   howl.on('play', () => {
     status.value = 'playing'
     lastPlayedName.value = station.name
+    recordRecent(station.name)
     persistState()
     requestWakeLock()
     startNowPlayingPoll(station)
@@ -280,6 +299,12 @@ function startSleepTimer(minutes) {
   }, 1000)
 }
 
+function snoozeFiveMinutes() {
+  // Add 5 minutes to whatever's already on the clock without resetting it.
+  if (sleepRemaining.value <= 0) return
+  sleepRemaining.value += 5 * 60
+}
+
 watch(sleepMinutes, (n) => startSleepTimer(n))
 
 function setMediaSession(station) {
@@ -406,6 +431,13 @@ onUnmounted(() => {
         </select>
         <span v-if="sleepLabel" class="sleep-countdown" aria-live="polite">{{ sleepLabel }}</span>
       </label>
+      <button
+        v-if="sleepRemaining > 0"
+        type="button"
+        class="snooze-btn"
+        aria-label="הוסף 5 דקות לטיימר"
+        @click="snoozeFiveMinutes"
+      >+5</button>
     </header>
 
     <ul class="station-list" aria-label="תחנות רדיו">
@@ -631,6 +663,19 @@ button:focus-visible { outline: 2px solid #fff; outline-offset: 2px; border-radi
   background: rgba(0, 0, 0, 0.2);
   padding: 0.1rem 0.5rem;
   border-radius: 9999px;
+}
+
+.snooze-btn {
+  color: #fff;
+  font-weight: 700;
+  font-size: 0.9rem;
+  background: rgba(255, 255, 255, 0.18);
+  padding: 0.4rem 0.75rem;
+  border-radius: 9999px;
+  transition: background 0.15s ease, transform 0.1s ease;
+
+  &:hover { background: rgba(255, 255, 255, 0.28); }
+  &:active { transform: scale(0.95); }
 }
 
 .station-list { list-style: none; padding: 0; margin: 0; @apply flex flex-col px-4; }

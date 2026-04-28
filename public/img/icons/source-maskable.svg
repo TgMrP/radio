@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <!-- Maskable icons need extra safe zone (20% padding) so the centered content
+       isn't clipped by the platform's mask shape. -->
+  <rect width="512" height="512" fill="#48bb78"/>
+  <g transform="translate(102.4 102.4) scale(0.6)">
+    <g fill="none" stroke="#ffffff" stroke-linecap="round" stroke-width="36">
+      <path d="M 145 365 a 75 75 0 0 1 75 -75"/>
+      <path d="M 145 365 a 150 150 0 0 1 150 -150"/>
+      <path d="M 145 365 a 225 225 0 0 1 225 -225"/>
+    </g>
+    <circle cx="145" cy="365" r="32" fill="#ffffff"/>
+  </g>
+</svg>
